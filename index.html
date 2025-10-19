@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Taiwan Air Quality Map - AirBox Only</title>
+<title>Taiwan Air Quality Map - Live Nearest AirBox</title>
 
 <!-- Leaflet CSS -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
@@ -11,15 +11,30 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
 
 <style>
-  html, body { margin:0; padding:0; height:100%; width:100%; }
-  #map { width:100%; height:100%; }
-  .legend { background:white; padding:8px; line-height:16px; color:#555; box-shadow:0 0 10px rgba(0,0,0,0.2); border-radius:5px; font-size:12px; }
-  .legend span { display:inline-block; width:16px; height:16px; margin-right:4px; }
+html, body { margin:0; padding:0; height:100%; width:100%; }
+#map { width:100%; height:100%; }
+.legend { background:white; padding:8px; line-height:16px; color:#555; box-shadow:0 0 10px rgba(0,0,0,0.2); border-radius:5px; font-size:12px; }
+.legend span { display:inline-block; width:16px; height:16px; margin-right:4px; }
+#nearestBox {
+  position:absolute;
+  top:10px;
+  left:50%;
+  transform:translateX(-50%);
+  background: rgba(255,255,255,0.9);
+  padding:8px 12px;
+  border-radius:5px;
+  font-family:sans-serif;
+  font-size:14px;
+  font-weight:bold;
+  box-shadow:0 0 10px rgba(0,0,0,0.2);
+  z-index:1000;
+}
 </style>
 </head>
 <body>
 
 <div id="map"></div>
+<div id="nearestBox">Finding nearest AirBox...</div>
 
 <!-- Leaflet JS -->
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -27,16 +42,17 @@
 
 <script>
 const map = L.map('map').setView([23.5,121], 7);
-
-// OpenStreetMap tiles
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:18 }).addTo(map);
 
 const airboxCluster = L.markerClusterGroup();
+let nearestMarker = null;
+let userMarker = null;
+let feeds = [];
 
-// Use your Cloudflare Worker URL
+// Cloudflare Worker proxy
 const LASS_URL = "https://zoleeaqi.hegezoli.workers.dev/";
 
-// Utility to color based on PM2.5
+// Utility: color by PM2.5
 function pmColor(pm25){
   if(pm25<=15) return '#00E400';
   if(pm25<=35) return '#FFFF00';
@@ -46,20 +62,68 @@ function pmColor(pm25){
   return '#7E0023';
 }
 
+// Haversine distance
+function distance(lat1, lon1, lat2, lon2){
+  const R = 6371;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
 function addMarker(cluster, lat, lon, popupText, color='#FF0000'){
   const marker = L.circleMarker([lat, lon], { radius:6, color, fillColor: color, fillOpacity:0.7 });
   marker.bindPopup(popupText);
   cluster.addLayer(marker);
+  return marker;
 }
 
+function updateNearestBox(deviceId, pm25, dist){
+  const box = document.getElementById('nearestBox');
+  box.innerHTML = `Nearest AirBox: <b>${deviceId}</b> | PM2.5: <b>${pm25} µg/m³</b> | Distance: ${dist.toFixed(2)} km`;
+}
+
+// Highlight nearest AirBox
+function findNearest(userLat, userLon){
+  if(userLat===null || userLon===null || feeds.length===0) return;
+
+  let nearest = null;
+  let minDist = Infinity;
+
+  feeds.forEach(f=>{
+    const lat = parseFloat(f.gps_lat || f.lat);
+    const lon = parseFloat(f.gps_lon || f.lon);
+    const pm25 = parseFloat(f.s_d0 || f.pm25);
+    if(isNaN(lat) || isNaN(lon)) return;
+    const d = distance(userLat, userLon, lat, lon);
+    if(d < minDist){ minDist = d; nearest = f; }
+  });
+
+  if(nearest){
+    const lat = parseFloat(nearest.gps_lat || nearest.lat);
+    const lon = parseFloat(nearest.gps_lon || nearest.lon);
+    const pm25 = parseFloat(nearest.s_d0 || nearest.pm25);
+
+    if(nearestMarker) map.removeLayer(nearestMarker);
+    nearestMarker = L.circleMarker([lat, lon], { radius:10, color:'#0000FF', fillColor:'#0000FF', fillOpacity:0.9 }).addTo(map);
+    nearestMarker.bindPopup(`<b>Nearest AirBox: ${nearest.device_id}</b><br>PM2.5: ${pm25} µg/m³<br>Distance: ${minDist.toFixed(2)} km`);
+
+    // Update floating info box
+    updateNearestBox(nearest.device_id, pm25, minDist);
+  }
+}
+
+// Load AirBox stations
 async function loadAirBox(){
   airboxCluster.clearLayers();
+  if(nearestMarker) { map.removeLayer(nearestMarker); nearestMarker = null; }
 
   try{
     const resp = await fetch(LASS_URL);
     const data = await resp.json();
     const feedsObj = data.feeds || {};
-    const feeds = Object.values(feedsObj); // convert object to array
+    feeds = Object.values(feedsObj);
 
     feeds.forEach(f=>{
       const lat = parseFloat(f.gps_lat || f.lat);
@@ -75,13 +139,34 @@ async function loadAirBox(){
 
   } catch(e){
     console.error("Error fetching AirBox data:", e);
+    document.getElementById('nearestBox').innerText = "Error loading AirBox data";
   }
+}
+
+// Track user location live
+if(navigator.geolocation){
+  navigator.geolocation.watchPosition(pos=>{
+    const userLat = pos.coords.latitude;
+    const userLon = pos.coords.longitude;
+
+    // Add or move user marker
+    if(!userMarker){
+      userMarker = L.circleMarker([userLat, userLon], { radius:6, color:'#0000FF', fillColor:'#0000FF', fillOpacity:0.7 }).addTo(map);
+      userMarker.bindPopup("You are here");
+    } else {
+      userMarker.setLatLng([userLat, userLon]);
+    }
+
+    findNearest(userLat, userLon);
+
+  }, err => {
+    console.warn("Geolocation error:", err);
+  }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 });
 }
 
 // Initial load
 loadAirBox();
-// Refresh every 15 min
-setInterval(loadAirBox, 15*60*1000);
+setInterval(loadAirBox, 15*60*1000); // refresh every 15 min
 
 // Legend
 const legend = L.control({position:'bottomright'});
