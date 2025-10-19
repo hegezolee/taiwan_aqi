@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Taiwan Air Quality Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; }
+        #map { width: 100%; height: 100%; }
+        .legend {
+            background: white;
+            padding: 10px;
+            line-height: 18px;
+            color: #555;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+            border-radius: 5px;
+        }
+        .legend span { display: inline-block; width: 18px; height: 18px; margin-right: 5px; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+    <script>
+        const map = L.map('map').setView([23.5, 121], 7);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+
+        const epaCluster = L.markerClusterGroup();
+        const lassCluster = L.markerClusterGroup();
+
+        const EPA_URL = 'https://raw.githubusercontent.com/kiang/aqi-taiwan/main/data/latest.json';
+        const LASS_URL = 'https://pm25.lass-net.org/data/last-all-airbox.json';
+
+        function aqiColor(aqi) {
+            if (isNaN(aqi)) return '#888888';
+            if (aqi <= 50) return '#00E400';
+            if (aqi <= 100) return '#FFFF00';
+            if (aqi <= 150) return '#FF7E00';
+            if (aqi <= 200) return '#FF0000';
+            if (aqi <= 300) return '#8F3F97';
+            return '#7E0023';
+        }
+
+        function addMarker(cluster, lat, lon, popupText, color = '#FF0000') {
+            const marker = L.circleMarker([lat, lon], {
+                radius: 6,
+                color: color,
+                fillColor: color,
+                fillOpacity: 0.7
+            });
+            marker.bindPopup(popupText);
+            cluster.addLayer(marker);
+        }
+
+        async function loadData() {
+            epaCluster.clearLayers();
+            lassCluster.clearLayers();
+
+            try {
+                const resp = await fetch(EPA_URL);
+                const data = await resp.json();
+                data.forEach(s => {
+                    const lat = parseFloat(s.Latitude);
+                    const lon = parseFloat(s.Longitude);
+                    const aqi = parseFloat(s.AQI);
+                    if (!isNaN(lat) && !isNaN(lon) && !isNaN(aqi)) {
+                        const popup = `${s.SiteName} (${s.County})<br>AQI: ${s.AQI}<br>PM2.5: ${s["PM2.5"]}`;
+                        addMarker(epaCluster, lat, lon, popup, aqiColor(aqi));
+                    }
+                });
+            } catch (e) { console.log("EPA load error:", e); }
+
+            try {
+                const resp = await fetch(LASS_URL);
+                const raw = await resp.json();
+                const feeds = raw.feeds || raw;
+                feeds.forEach(f => {
+                    const lat = parseFloat(f.gps_lat || f.lat);
+                    const lon = parseFloat(f.gps_lon || f.lon);
+                    const pm25 = parseFloat(f.s_d0 || f.pm25);
+                    if (!isNaN(lat) && !isNaN(lon) && !isNaN(pm25)) {
+                        const popup = `${f.device_id || 'AirBox'}<br>PM2.5: ${pm25}`;
+                        addMarker(lassCluster, lat, lon, popup, aqiColor(pm25));
+                    }
+                });
+            } catch (e) { console.log("LASS load error:", e); }
+
+            if (!map.hasLayer(epaCluster)) map.addLayer(epaCluster);
+            if (!map.hasLayer(lassCluster)) map.addLayer(lassCluster);
+        }
+
+        const overlayMaps = {
+            "EPA Stations": epaCluster,
+            "AirBox Stations": lassCluster
+        };
+        L.control.layers(null, overlayMaps, { collapsed: false }).addTo(map);
+
+        const legend = L.control({ position: 'bottomright' });
+        legend.onAdd = function (map) {
+            const div = L.DomUtil.create('div', 'legend');
+            div.innerHTML = "<b>AQI Levels</b><br>";
+            const levels = [
+                { color: '#00E400', label: '0-50 Good' },
+                { color: '#FFFF00', label: '51-100 Moderate' },
+                { color: '#FF7E00', label: '101-150 Unhealthy (S)' },
+                { color: '#FF0000', label: '151-200 Unhealthy' },
+                { color: '#8F3F97', label: '201-300 Very Unhealthy' },
+                { color: '#7E0023', label: '301+ Hazardous' }
+            ];
+            levels.forEach(l => {
+                div.innerHTML += `<span style="background:${l.color}"></span>${l.label}<br>`;
+            });
+            return div;
+        };
+        legend.addTo(map);
+
+        loadData();
+        setInterval(loadData, 900000); // auto-refresh every 15 min
+    </script>
+</body>
+</html>
