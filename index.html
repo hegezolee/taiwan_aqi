@@ -33,8 +33,8 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:18 }
 
 const airboxCluster = L.markerClusterGroup();
 
-// AirBox JSON URL
-const LASS_URL = "https://pm25.lass-net.org/data/last-all-airbox.json";
+// Use your Cloudflare Worker URL
+const LASS_URL = "https://zoleeaqi.hegezoli.workers.dev/";
 
 // Utility to color based on PM2.5
 function pmColor(pm25){
