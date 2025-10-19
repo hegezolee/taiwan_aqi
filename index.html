@@ -72,8 +72,7 @@ const lassCluster = L.markerClusterGroup();
 let nearestMarker = null;
 let allStations = [];
 
-const API_KEY = "d547b92d-ab19-4510-9370-bf467d041fc3";
-const EPA_URL = `https://data.epa.gov.tw/api/v2/aqx_p_432?format=JSON&limit=1000&api_key=${API_KEY}`;
+const WORKER_URL = 'https://your-worker-name.pages.dev';
 const LASS_URL = 'https://pm25.lass-net.org/data/last-all-airbox.json';
 
 function aqiColor(aqi){
