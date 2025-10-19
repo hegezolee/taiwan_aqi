@@ -47,7 +47,6 @@
     font-size:12px;
   }
   .locate-btn:hover {background:#f0f0f0;}
-  /* Make touch-friendly */
   @media (max-width:600px){
     .nearest-widget {font-size:11px; max-width:120px; top:8px; right:8px; padding:6px;}
     .locate-btn {top:100px; right:8px; padding:5px 8px; font-size:11px;}
@@ -72,8 +71,7 @@ const lassCluster = L.markerClusterGroup();
 let nearestMarker = null;
 let allStations = [];
 
-const WORKER_URL = 'https://your-worker-name.pages.dev';
-const LASS_URL = 'https://pm25.lass-net.org/data/last-all-airbox.json';
+const WORKER_URL = 'YOUR_WORKER_URL'; // <-- replace with your Cloudflare Worker URL
 
 function aqiColor(aqi){
   if(isNaN(aqi)) return '#888888';
@@ -86,9 +84,7 @@ function aqiColor(aqi){
 }
 
 function addMarker(cluster, lat, lon, popupText, color='#FF0000'){
-  const marker = L.circleMarker([lat, lon], {
-    radius:6, color: color, fillColor: color, fillOpacity:0.7
-  });
+  const marker = L.circleMarker([lat, lon], { radius:6, color: color, fillColor: color, fillOpacity:0.7 });
   marker.bindPopup(popupText);
   cluster.addLayer(marker);
   return marker;
@@ -118,9 +114,11 @@ async function loadData(){
   allStations = [];
 
   try{
-    const resp = await fetch(EPA_URL);
+    const resp = await fetch(WORKER_URL);
     const data = await resp.json();
-    (data.records || data.result?.records || []).forEach(s=>{
+
+    // EPA data
+    (data.epa || []).forEach(s=>{
       const lat = parseFloat(s.Latitude || s.latitude);
       const lon = parseFloat(s.Longitude || s.longitude);
       const aqi = parseFloat(s.AQI || s.aqi);
@@ -131,13 +129,9 @@ async function loadData(){
         allStations.push({lat, lon, aqi, pm25, name: s.SiteName || s.sitename});
       }
     });
-  }catch(e){console.log("EPA load error", e);}
 
-  try{
-    const resp = await fetch(LASS_URL);
-    const raw = await resp.json();
-    const feeds = raw.feeds || raw;
-    feeds.forEach(f=>{
+    // LASS data
+    (data.lass || []).forEach(f=>{
       const lat = parseFloat(f.gps_lat || f.lat);
       const lon = parseFloat(f.gps_lon || f.lon);
       const pm25 = parseFloat(f.s_d0 || f.pm25);
@@ -147,12 +141,12 @@ async function loadData(){
         allStations.push({lat, lon, aqi: pm25, pm25, name: f.device_id || 'AirBox'});
       }
     });
-  }catch(e){console.log("LASS load error", e);}
 
-  if(!map.hasLayer(epaCluster)) map.addLayer(epaCluster);
-  if(!map.hasLayer(lassCluster)) map.addLayer(lassCluster);
+    if(!map.hasLayer(epaCluster)) map.addLayer(epaCluster);
+    if(!map.hasLayer(lassCluster)) map.addLayer(lassCluster);
+    highlightNearestStation();
 
-  highlightNearestStation();
+  } catch(e){console.log("Worker fetch error", e);}
 }
 
 function highlightNearestStation(){
